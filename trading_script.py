@@ -5,14 +5,17 @@ results. It is intentionally lightweight and avoids changing existing
 logic or behaviour.
 """
 
+import os
 from datetime import datetime
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 import pandas as pd
 import yfinance as yf
-from typing import cast
-import os
+
+# Импорт нашего клиента для Tinkoff API
+import tinkoff_client
 
 # Shared file locations
 DATA_DIR = Path(".")
@@ -36,14 +39,16 @@ def set_data_dir(data_dir: Path) -> None:
     PORTFOLIO_CSV = DATA_DIR / "chatgpt_portfolio_update.csv"
     TRADE_LOG_CSV = DATA_DIR / "chatgpt_trade_log.csv"
 
+
 # Today's date reused across logs
 today = datetime.today().strftime("%Y-%m-%d")
 now = datetime.now()
 day = now.weekday()
 
 
-
-def process_portfolio(portfolio: pd.DataFrame, starting_cash: float) -> tuple[pd.DataFrame, float]:
+def process_portfolio(
+    portfolio: pd.DataFrame, starting_cash: float
+) -> tuple[pd.DataFrame, float]:
     """Update daily price information, log stop-loss sells, and prompt for trades.
 
     The function iterates through each position, retrieves the latest close
@@ -57,17 +62,23 @@ def process_portfolio(portfolio: pd.DataFrame, starting_cash: float) -> tuple[pd
     cash = starting_cash
 
     if day == 6 or day == 5:
-        check = input("""Today is currently a weekend, so markets were never open. 
+        check = input(
+            """Today is currently a weekend, so markets were never open. 
 This will cause the program to calculate data from the last day (usually Friday), and save it as today.
-Are you sure you want to do this? To exit, enter 1. """)
+Are you sure you want to do this? To exit, enter 1. """
+        )
     if check == "1":
         raise SystemError("Exitting program...")
 
     while True:
-        action = input(
-            f""" You have {cash} in cash.
+        action = (
+            input(
+                f""" You have {cash} in cash.
 Would you like to log a manual trade? Enter 'b' for buy, 's' for sell, or press Enter to continue: """
-        ).strip().lower()
+            )
+            .strip()
+            .lower()
+        )
         if action == "b":
             try:
                 ticker = input("Enter ticker symbol: ").strip().upper()
@@ -253,28 +264,30 @@ def log_manual_buy(
         df = pd.DataFrame([log])
     df.to_csv(TRADE_LOG_CSV, index=False)
     # if the portfolio doesn't already contain ticker, create a new row.
-    
+
     mask = chatgpt_portfolio["ticker"] == ticker
 
     if not mask.any():
         new_trade = {
-        "ticker": ticker,
-        "shares": shares,
-        "stop_loss": stoploss,
-        "buy_price": buy_price,
-        "cost_basis": buy_price * shares,
-    }
+            "ticker": ticker,
+            "shares": shares,
+            "stop_loss": stoploss,
+            "buy_price": buy_price,
+            "cost_basis": buy_price * shares,
+        }
         chatgpt_portfolio = pd.concat(
             [chatgpt_portfolio, pd.DataFrame([new_trade])], ignore_index=True
-    )
+        )
     # if the portfolio contains ticker already, update the row.
     else:
         row_index = chatgpt_portfolio[mask].index[0]
-        chatgpt_portfolio.loc[row_index, 'shares'] = chatgpt_portfolio.loc[row_index, "shares"] + shares # type: ignore
-        current_cost_basis =  float(chatgpt_portfolio.loc[row_index, 'cost_basis'].item()) # type: ignore
-        chatgpt_portfolio.loc[row_index, 'cost_basis'] = shares * buy_price + current_cost_basis
-    # update all stoploss for all shares
-        chatgpt_portfolio.loc[row_index, 'stop_loss'] = stoploss
+        chatgpt_portfolio.loc[row_index, "shares"] = chatgpt_portfolio.loc[row_index, "shares"] + shares  # type: ignore
+        current_cost_basis = float(chatgpt_portfolio.loc[row_index, "cost_basis"].item())  # type: ignore
+        chatgpt_portfolio.loc[row_index, "cost_basis"] = (
+            shares * buy_price + current_cost_basis
+        )
+        # update all stoploss for all shares
+        chatgpt_portfolio.loc[row_index, "stop_loss"] = stoploss
     cash = cash - shares * buy_price
     print(f"Manual buy for {ticker} complete!")
     return cash, chatgpt_portfolio
@@ -334,7 +347,10 @@ NOTE: THIS ORDER WILL EXECUTE NO MATTER WHAT. BE SURE TO CHECK VALIDITY."""
     else:
         row_index = ticker_row.index[0]
         chatgpt_portfolio.loc[row_index, "shares"] = total_shares - shares_sold
-        chatgpt_portfolio.loc[row_index, "cost_basis"] = chatgpt_portfolio.loc[row_index, "shares"] * chatgpt_portfolio.loc[row_index, "buy_price"]
+        chatgpt_portfolio.loc[row_index, "cost_basis"] = (
+            chatgpt_portfolio.loc[row_index, "shares"]
+            * chatgpt_portfolio.loc[row_index, "buy_price"]
+        )
 
     cash = cash + shares_sold * sell_price
     print(f"manual sell for {ticker} complete!")
@@ -346,7 +362,12 @@ def daily_results(chatgpt_portfolio: pd.DataFrame, cash: float) -> None:
     if isinstance(chatgpt_portfolio, pd.DataFrame):
         portfolio_dict = chatgpt_portfolio.to_dict(orient="records")
     print(f"prices and updates for {today}")
-    for stock in portfolio_dict + [{"ticker": "^RUT"}] + [{"ticker": "IWO"}] + [{"ticker": "XBI"}]:
+    for stock in (
+        portfolio_dict
+        + [{"ticker": "^RUT"}]
+        + [{"ticker": "IWO"}]
+        + [{"ticker": "XBI"}]
+    ):
         ticker = stock["ticker"]
         try:
             data = yf.download(ticker, period="2d", progress=False)
@@ -360,7 +381,9 @@ def daily_results(chatgpt_portfolio: pd.DataFrame, cash: float) -> None:
             percent_change = ((price - last_price) / last_price) * 100
             volume = float(data["Volume"].iloc[-1].item())
         except Exception as e:
-            raise Exception(f"Download for {ticker} failed. {e} Try checking internet connection.")
+            raise Exception(
+                f"Download for {ticker} failed. {e} Try checking internet connection."
+            )
         print(f"{ticker} closing price: {price:.2f}")
         print(f"{ticker} volume for today: ${volume:,}")
         print(f"percent change from the day before: {percent_change:.2f}%")
@@ -377,7 +400,9 @@ def daily_results(chatgpt_portfolio: pd.DataFrame, cash: float) -> None:
     # Daily returns
     daily_pct = equity_series.pct_change().dropna()
 
-    total_return = (equity_series.iloc[-1] - equity_series.iloc[0]) / equity_series.iloc[0]
+    total_return = (
+        equity_series.iloc[-1] - equity_series.iloc[0]
+    ) / equity_series.iloc[0]
 
     # Number of total trading days
     n_days = len(chatgpt_totals)
@@ -400,7 +425,12 @@ def daily_results(chatgpt_portfolio: pd.DataFrame, cash: float) -> None:
     print(f"Total Sortino Ratio over {n_days} days: {sortino_total:.4f}")
     print(f"Latest ChatGPT Equity: ${final_equity:.2f}")
     # Get S&P 500 data
-    spx = yf.download("^SPX", start="2025-06-27", end=final_date + pd.Timedelta(days=1), progress=False)
+    spx = yf.download(
+        "^SPX",
+        start="2025-06-27",
+        end=final_date + pd.Timedelta(days=1),
+        progress=False,
+    )
     spx = cast(pd.DataFrame, spx)
     spx = spx.reset_index()
 
@@ -454,14 +484,31 @@ def main(
 
 if __name__ == "__main__":
     """Example execution using the default portfolio.
-        Edit rows with your portfolio and insert real cash.
-        Note: Cost Basis = Shares X Buying Price"""
+    Edit rows with your portfolio and insert real cash.
+    Note: Cost Basis = Shares X Buying Price"""
 
     cash = 100
     chatgpt_portfolio = [
-        {"ticker": "ABEO", "shares": 6, "stop_loss": 4.9, "buy_price": 5.77, "cost_basis": 34.62},
-        {"ticker": "IINN", "shares": 14, "stop_loss": 1.1, "buy_price": 1.5, "cost_basis": 21.0},
-        {"ticker": "ACTU", "shares": 6, "stop_loss": 4.89, "buy_price": 5.75, "cost_basis": 34.5},
+        {
+            "ticker": "ABEO",
+            "shares": 6,
+            "stop_loss": 4.9,
+            "buy_price": 5.77,
+            "cost_basis": 34.62,
+        },
+        {
+            "ticker": "IINN",
+            "shares": 14,
+            "stop_loss": 1.1,
+            "buy_price": 1.5,
+            "cost_basis": 21.0,
+        },
+        {
+            "ticker": "ACTU",
+            "shares": 6,
+            "stop_loss": 4.89,
+            "buy_price": 5.75,
+            "cost_basis": 34.5,
+        },
     ]
     main(chatgpt_portfolio, cash, Path.cwd())
-

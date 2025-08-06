@@ -1,0 +1,10 @@
+# Основные зависимости проекта
+pandas
+numpy
+matplotlib
+
+# Tinkoff Investments API
+tinkoff-investments
+
+# Пока оставляем yfinance для совместимости (потом уберем)
+yfinance
