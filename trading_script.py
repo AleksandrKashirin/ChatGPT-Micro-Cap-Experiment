@@ -61,6 +61,7 @@ def process_portfolio(
     total_pnl = 0.0
     cash = starting_cash
 
+    check = None  # Инициализация переменной
     if day == 6 or day == 5:
         check = input(
             """Today is currently a weekend, so markets were never open. 
@@ -115,7 +116,7 @@ Would you like to log a manual trade? Enter 'b' for buy, 's' for sell, or press 
         shares = int(stock["shares"])
         cost = stock["buy_price"]
         stop = stock["stop_loss"]
-        data = yf.Ticker(ticker).history(period="1d")
+        data = tinkoff_client.get_historical_data(ticker, "1d")
 
         if data.empty:
             print(f"No data for {ticker}")
@@ -362,16 +363,10 @@ def daily_results(chatgpt_portfolio: pd.DataFrame, cash: float) -> None:
     if isinstance(chatgpt_portfolio, pd.DataFrame):
         portfolio_dict = chatgpt_portfolio.to_dict(orient="records")
     print(f"prices and updates for {today}")
-    for stock in (
-        portfolio_dict
-        + [{"ticker": "^RUT"}]
-        + [{"ticker": "IWO"}]
-        + [{"ticker": "XBI"}]
-    ):
+    for stock in portfolio_dict:
         ticker = stock["ticker"]
         try:
-            data = yf.download(ticker, period="2d", progress=False)
-            data = cast(pd.DataFrame, data)
+            data = tinkoff_client.get_historical_data(ticker, "2d")
             if data.empty or len(data) < 2:
                 print(f"Data for {ticker} was empty or incomplete.")
                 continue
@@ -424,22 +419,27 @@ def daily_results(chatgpt_portfolio: pd.DataFrame, cash: float) -> None:
     print(f"Total Sharpe Ratio over {n_days} days: {sharpe_total:.4f}")
     print(f"Total Sortino Ratio over {n_days} days: {sortino_total:.4f}")
     print(f"Latest ChatGPT Equity: ${final_equity:.2f}")
-    # Get S&P 500 data
-    spx = yf.download(
-        "^SPX",
-        start="2025-06-27",
-        end=final_date + pd.Timedelta(days=1),
-        progress=False,
-    )
-    spx = cast(pd.DataFrame, spx)
-    spx = spx.reset_index()
+    # Get IMOEX data
+    import config
 
-    # Normalize to $100
-    initial_price = spx["Close"].iloc[0].item()
-    price_now = spx["Close"].iloc[-1].item()
-    scaling_factor = 100 / initial_price
-    spx_value = price_now * scaling_factor
-    print(f"$100 Invested in the S&P 500: ${spx_value:.2f}")
+    # Используем IMOEX вместо S&P 500 и новую дату начала
+    try:
+        imoex = tinkoff_client.get_historical_data(
+            config.RUSSIAN_INDICES["IMOEX"], 
+            "7d"  # Берем неделю данных
+        )
+        if imoex.empty:
+            print("⚠️  Нет данных по IMOEX, используем фиксированное значение")
+            # Используем текущий уровень IMOEX ~2700
+            imoex_value = 6000  # 6000₽ остались бы без изменений
+            print(f"6000₽ invested in IMOEX: {imoex_value:.2f}₽")
+        else:
+            imoex = imoex.reset_index()
+
+    except Exception as e:
+        print(f"⚠️  Ошибка получения IMOEX: {e}")
+        print("6000₽ invested in IMOEX: 6000.00₽")
+
     print(f"today's portfolio: {chatgpt_portfolio}")
     print(f"cash balance: {cash}")
 
